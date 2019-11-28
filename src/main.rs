@@ -48,14 +48,15 @@ fn handle_client(stream: UnixStream) {
                     _ => {
                         let parts = msg.value.split_whitespace().collect::<Vec<_>>();
 
-                        let output = Command::new(parts[0])
-                            .arg(parts[1])
-                            .output()
-                            .unwrap();
+                        let mut app = Command::new(parts[0]);
+                        for part in 1..parts.len() {
+                            app.arg(parts[part]);
+                        }
+                        let output = app.output().unwrap();
 
                         println!("{}", String::from_utf8_lossy(output.stdout.as_slice()));
                         write.write(output.stdout.as_slice());
-                        write.write("\n\n".as_bytes());
+                        write.write("\n".as_bytes());
                         write.flush();
                     }
                 }
@@ -76,7 +77,7 @@ fn register_on_broker(path: &String, msg: &Message) {
                 let mut write_client = BufWriter::new(&client);
 
                 let mut msg = serde_json::to_string(msg).unwrap();
-                msg = msg.add("\n\n");
+                msg = msg.add("\n");
                 println!("{}", &msg);
                 write_client.write_all(msg.as_bytes());
                 break;
