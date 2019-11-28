@@ -2,8 +2,24 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::os::unix::net::{UnixStream,UnixListener};
 use std::thread;
 use std::ops::Add;
+use std::process::Command;
 
 use serde::{Serialize, Deserialize};
+use std::thread::sleep;
+use std::time::Duration;
+
+#[derive(Serialize, Deserialize, Debug)]
+enum MsgTypes {
+    register,
+    ok,
+    command,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Message {
+    header: MsgTypes,
+    value: String,
+}
 
 fn handle_client(stream: UnixStream) {
     let read = BufReader::new(&stream);
@@ -16,10 +32,33 @@ fn handle_client(stream: UnixStream) {
                     break;
                 }
                 println!("{}", line);
-                line = line.add("\n\n");
-                let bytes_wrote: usize = write.write(line.as_bytes()).unwrap();
-                println!("{}", bytes_wrote);
-                write.flush();
+                let msg = serde_json::from_str(&line.as_str());
+                let msg: Message = match msg {
+                    Ok(msg) => {
+                        msg
+                    },
+                    _ => {
+                        println!("{}", "Bad Message!");
+                        return;
+                    }
+                };
+
+                match msg.header {
+                    MsgTypes::register => {},
+                    _ => {
+                        let parts = msg.value.split_whitespace().collect::<Vec<_>>();
+
+                        let output = Command::new(parts[0])
+                            .arg(parts[1])
+                            .output()
+                            .unwrap();
+
+                        println!("{}", String::from_utf8_lossy(output.stdout.as_slice()));
+                        write.write(output.stdout.as_slice());
+                        write.write("\n\n".as_bytes());
+                        write.flush();
+                    }
+                }
             },
             _ => {}
         }
@@ -30,25 +69,24 @@ fn remove_socket(path: &String) {
     std::fs::remove_file(path);
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-enum MsgTypes {
-    register,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Message {
-    header: MsgTypes,
-    value: String,
-}
-
 fn register_on_broker(path: &String, msg: &Message) {
-    let client = UnixStream::connect(path).unwrap();
-    let mut write_client = BufWriter::new(&client);
+    loop {
+        let client = match UnixStream::connect(path) {
+            Ok(client) => {
+                let mut write_client = BufWriter::new(&client);
 
-    let mut msg = serde_json::to_string(msg).unwrap();
-    msg = msg.add("\n\n");
-    println!("{}", &msg);
-    write_client.write_all(msg.as_bytes());
+                let mut msg = serde_json::to_string(msg).unwrap();
+                msg = msg.add("\n\n");
+                println!("{}", &msg);
+                write_client.write_all(msg.as_bytes());
+                break;
+            },
+            _ => {
+                println!("Waiting for broker!");
+                sleep(Duration::from_secs(1));
+            },
+        };
+    }
 }
 
 fn main() {
